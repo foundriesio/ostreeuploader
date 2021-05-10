@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"foundriesio/fiotools/pkg/fiotools"
+	"foundriesio/fiotools/pkg/ostreeuploader"
 	"log"
 	"os"
 )
@@ -24,11 +24,11 @@ func main() {
 	summary := flag.Bool("summary", false, "A flag to turn on a summary update at the end of repo push")
 	flag.Parse()
 
-	var pusher fiotools.Pusher
+	var pusher ostreeuploader.Pusher
 	if *creds != "" {
-		pusher, err = fiotools.NewPusher(*repo, *creds)
+		pusher, err = ostreeuploader.NewPusher(*repo, *creds)
 	} else {
-		pusher, err = fiotools.NewPusherNoAuth(*repo, *ostreeHubUrl, *factory)
+		pusher, err = ostreeuploader.NewPusherNoAuth(*repo, *ostreeHubUrl, *factory)
 	}
 	if err != nil {
 		log.Fatalf("Failed to create Fio Pusher: %s\n", err.Error())

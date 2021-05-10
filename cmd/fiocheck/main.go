@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"foundriesio/fiotools/pkg/fiotools"
+	"foundriesio/fiotools/pkg/ostreeuploader"
 	"log"
 	"os"
 )
@@ -23,11 +23,11 @@ func main() {
 	creds := flag.String("creds", "", "A credential archive with auth material")
 	flag.Parse()
 
-	var checker fiotools.Checker
+	var checker ostreeuploader.Checker
 	if *creds != "" {
-		checker, err = fiotools.NewChecker(*repo, *creds)
+		checker, err = ostreeuploader.NewChecker(*repo, *creds)
 	} else {
-		checker, err = fiotools.NewCheckerNoAuth(*repo, *ostreeHubUrl, *factory)
+		checker, err = ostreeuploader.NewCheckerNoAuth(*repo, *ostreeHubUrl, *factory)
 	}
 	if err != nil {
 		log.Fatalf("Failed to create Fio Pusher: %s\n", err.Error())

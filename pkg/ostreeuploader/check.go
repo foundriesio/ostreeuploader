@@ -1,4 +1,4 @@
-package fiotools
+package ostreeuploader
 
 import (
 	"fmt"
