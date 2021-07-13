@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"foundriesio/fiotools/pkg/ostreeuploader"
+	"github.com/foundriesio/ostreeuploader/pkg/ostreeuploader"
 	"log"
 	"os"
 )
