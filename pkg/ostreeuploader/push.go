@@ -85,6 +85,8 @@ const (
 	concurrentPusherNumb int = 20
 	// maximum number of files to check per a single HTTP request
 	filesToCheckMaxNumb int = 500
+	// maximum file size
+	maxFileSize int64 = 1024 * 1024 * 200 //200 MB
 )
 
 var (
@@ -230,6 +232,10 @@ func walkAndCrcRepo(repoDir string, filter []string) <-chan *RepoFile {
 		if err := filepath.Walk(dir, func(fullPath string, info os.FileInfo, walkErr error) error {
 			if walkErr != nil {
 				log.Fatalf("Failed to walk through a repo: %s\n", walkErr.Error())
+			}
+			if !info.IsDir() && maxFileSize < info.Size() {
+				log.Fatalf("Found a file in the repo that exceeds the maximum allowed file size: %s; %d > %d\n",
+					fullPath, info.Size(), maxFileSize)
 			}
 			if info.IsDir() {
 				return nil
