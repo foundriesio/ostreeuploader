@@ -34,16 +34,16 @@ var (
 	}
 )
 
-func NewChecker(repo string, credFile string) (Checker, error) {
-	th, err := newOSTreeHubAccessor(repo, credFile)
+func NewChecker(repo string, credFile string, apiVer string) (Checker, error) {
+	th, err := newOSTreeHubAccessor(repo, credFile, apiVer)
 	if err != nil {
 		return nil, err
 	}
 	return &checker{ostreehub: th}, nil
 }
 
-func NewCheckerNoAuth(repo string, hubURL string, factory string) (Checker, error) {
-	th, err := newOSTreeHubAccessorNoAuth(repo, hubURL, factory)
+func NewCheckerNoAuth(repo string, hubURL string, factory string, apiVer string) (Checker, error) {
+	th, err := newOSTreeHubAccessorNoAuth(repo, hubURL, factory, apiVer)
 	if err != nil {
 		return nil, err
 	}

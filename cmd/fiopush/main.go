@@ -22,13 +22,14 @@ func main() {
 	factory := flag.String("factory", "", "A Factory to upload repo for")
 	creds := flag.String("creds", "", "A credential archive with auth material")
 	summary := flag.Bool("summary", false, "A flag to turn on a summary update at the end of repo push")
+	apiVer := flag.String("api-version", "v1", "A version of the OSTree Hub API to communicate with")
 	flag.Parse()
 
 	var pusher ostreeuploader.Pusher
 	if *creds != "" {
-		pusher, err = ostreeuploader.NewPusher(*repo, *creds)
+		pusher, err = ostreeuploader.NewPusher(*repo, *creds, *apiVer)
 	} else {
-		pusher, err = ostreeuploader.NewPusherNoAuth(*repo, *ostreeHubUrl, *factory)
+		pusher, err = ostreeuploader.NewPusherNoAuth(*repo, *ostreeHubUrl, *factory, *apiVer)
 	}
 	if err != nil {
 		log.Fatalf("Failed to create Fio Pusher: %s\n", err.Error())
