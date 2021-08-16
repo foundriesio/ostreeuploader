@@ -58,12 +58,12 @@ func (p *checker) Factory() string {
 	return p.ostreehub.Factory()
 }
 
-func (p *checker) Check() error {
+func (p *checker) Check(corId string) error {
 	if err := p.ostreehub.auth(); err != nil {
 		return err
 	}
 
-	p.status = check(p.ostreehub.repo, walkAndCrcRepo(p.ostreehub.repo, checkFileFilterIn), p.ostreehub.url, p.ostreehub.token)
+	p.status = check(p.ostreehub.repo, walkAndCrcRepo(p.ostreehub.repo, checkFileFilterIn), p.ostreehub.url, p.ostreehub.token, corId)
 	return nil
 }
 
