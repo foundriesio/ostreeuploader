@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"hash/crc32"
 	"io"
 	"io/ioutil"
@@ -38,14 +39,14 @@ type (
 
 	Pusher interface {
 		OSTreeHubAccessor
-		Push() error
+		Push(corId string) error
 		Wait() (*Report, error)
 		UpdateSummary() error
 	}
 
 	Checker interface {
 		OSTreeHubAccessor
-		Check() error
+		Check(corId string) error
 		Wait() (*CheckReport, error)
 	}
 
@@ -167,7 +168,7 @@ func (p *pusher) Factory() string {
 	return p.ostreehub.Factory()
 }
 
-func (p *pusher) Push() error {
+func (p *pusher) Push(corId string) error {
 	if err := p.ostreehub.auth(); err != nil {
 		return err
 	}
@@ -175,7 +176,7 @@ func (p *pusher) Push() error {
 	if p.status != nil {
 		return fmt.Errorf("cannot run Pusher if there are unfinished push jobs")
 	}
-	p.status = push(p.ostreehub.repo, walkAndCrcRepo(p.ostreehub.repo, repoFileFilterIn), p.ostreehub.url, p.ostreehub.token)
+	p.status = push(p.ostreehub.repo, walkAndCrcRepo(p.ostreehub.repo, repoFileFilterIn), p.ostreehub.url, p.ostreehub.token, corId)
 	return nil
 }
 
@@ -282,7 +283,7 @@ func filterRepoFiles(path string, filter []string) bool {
 	return false
 }
 
-func push(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token string) *Status {
+func push(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token string, corId string) *Status {
 	checkReportQueue := make(chan uint, concurrentPusherNumb)
 	reportQueue := make(chan *SendReport, concurrentPusherNumb)
 	recvReportQueue := make(chan *SyncReport, concurrentPusherNumb)
@@ -307,13 +308,13 @@ func push(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token string
 						break
 					}
 
-					objectsToSync := checkRepo(objectsToCheck, url, token)
+					objectsToSync := checkRepo(objectsToCheck, url, token, corId)
 
 					checkReportQueue <- uint(len(objectsToCheck))
 
 					if len(objectsToSync) > 0 {
 						tarReader, sendReportChannel := Tar(repoDir, objectsToSync)
-						recvReportChannel := pushRepo(tarReader, url, token)
+						recvReportChannel := pushRepo(tarReader, url, token, corId)
 
 						reportQueue <- <-sendReportChannel
 						recvReportQueue <- <-recvReportChannel
@@ -329,7 +330,7 @@ func push(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token string
 	return &Status{Check: checkReportQueue, Send: reportQueue, Sync: recvReportQueue}
 }
 
-func check(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token string) *CheckStatus {
+func check(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token string, corId string) *CheckStatus {
 	checkReportQueue := make(chan uint, concurrentPusherNumb)
 	statusQueue := make(chan *RepoFile, concurrentPusherNumb)
 
@@ -353,7 +354,7 @@ func check(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token strin
 						break
 					}
 
-					objectsToSync := checkRepo(objectsToCheck, url, token)
+					objectsToSync := checkRepo(objectsToCheck, url, token, corId)
 					checkReportQueue <- uint(len(objectsToCheck))
 
 					for file, crc := range objectsToSync {
@@ -391,12 +392,14 @@ func waitForCheck(status *CheckStatus) *CheckReport {
 	}
 }
 
-func checkRepo(objs map[string]uint32, url *url.URL, token string) map[string]uint32 {
+func checkRepo(objs map[string]uint32, url *url.URL, token string, corId string) map[string]uint32 {
 	jsonObjects, _ := json.Marshal(objs)
 	req, err := http.NewRequest("GET", url.String(), bytes.NewBuffer(jsonObjects))
 	if err != nil {
 		log.Fatalf("Failed to create a request to check objects presence: %s\n", err.Error())
 	}
+	req.Header.Set("X-Correlation-ID", corId)
+	req.Header.Set("X-Request-ID", uuid.New().String())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
@@ -423,7 +426,7 @@ func checkRepo(objs map[string]uint32, url *url.URL, token string) map[string]ui
 	return respMap
 }
 
-func pushRepo(pr *io.PipeReader, u *url.URL, token string) <-chan *SyncReport {
+func pushRepo(pr *io.PipeReader, u *url.URL, token string, corId string) <-chan *SyncReport {
 	req := &http.Request{
 		Method:           "PUT",
 		ProtoMajor:       1,
@@ -433,6 +436,9 @@ func pushRepo(pr *io.PipeReader, u *url.URL, token string) <-chan *SyncReport {
 		Body:             pr,
 		Header:           make(map[string][]string),
 	}
+
+	req.Header.Set("X-Correlation-ID", corId)
+	req.Header.Set("X-Request-ID", uuid.New().String())
 	req.Header.Set("Expect", "100-continue")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
