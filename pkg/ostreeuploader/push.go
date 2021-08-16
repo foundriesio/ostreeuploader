@@ -98,7 +98,7 @@ var (
 	}
 )
 
-func newOSTreeHubAccessor(repo string, credFile string) (*ostreeHubAccessor, error) {
+func newOSTreeHubAccessor(repo string, credFile string, apiVer string) (*ostreeHubAccessor, error) {
 	if err := checkRepoDir(repo); err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func newOSTreeHubAccessor(repo string, credFile string) (*ostreeHubAccessor, err
 	if err != nil {
 		return nil, err
 	}
-	reqUrl, err := url.Parse(hub.URL + "/ota/ostreehub/" + hub.Factory + "/v1/repos/lmp")
+	reqUrl, err := url.Parse(hub.URL + "/ota/ostreehub/" + hub.Factory + "/" + apiVer + "/repos/lmp")
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func newOSTreeHubAccessor(repo string, credFile string) (*ostreeHubAccessor, err
 	return &ostreeHubAccessor{repo: repo, url: reqUrl, hub: hub, token: ""}, nil
 }
 
-func newOSTreeHubAccessorNoAuth(repo string, hubURL string, factory string) (*ostreeHubAccessor, error) {
+func newOSTreeHubAccessorNoAuth(repo string, hubURL string, factory string, apiVer string) (*ostreeHubAccessor, error) {
 	if err := checkRepoDir(repo); err != nil {
 		return nil, err
 	}
@@ -128,23 +128,23 @@ func newOSTreeHubAccessorNoAuth(repo string, hubURL string, factory string) (*os
 		URL:     hubURL,
 		Factory: factory,
 	}
-	reqUrl, err := url.Parse(hub.URL + "/v1/repos/lmp?factory=" + hub.Factory)
+	reqUrl, err := url.Parse(hub.URL + "/" + apiVer + "/repos/lmp?factory=" + hub.Factory)
 	if err != nil {
 		return nil, err
 	}
 	return &ostreeHubAccessor{repo: repo, url: reqUrl, hub: &hub, token: ""}, nil
 }
 
-func NewPusher(repo string, credFile string) (Pusher, error) {
-	th, err := newOSTreeHubAccessor(repo, credFile)
+func NewPusher(repo string, credFile string, apiVer string) (Pusher, error) {
+	th, err := newOSTreeHubAccessor(repo, credFile, apiVer)
 	if err != nil {
 		return nil, err
 	}
 	return &pusher{ostreehub: th}, nil
 }
 
-func NewPusherNoAuth(repo string, hubURL string, factory string) (Pusher, error) {
-	th, err := newOSTreeHubAccessorNoAuth(repo, hubURL, factory)
+func NewPusherNoAuth(repo string, hubURL string, factory string, apiVer string) (Pusher, error) {
+	th, err := newOSTreeHubAccessorNoAuth(repo, hubURL, factory, apiVer)
 	if err != nil {
 		return nil, err
 	}
