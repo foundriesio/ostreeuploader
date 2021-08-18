@@ -31,6 +31,7 @@ type (
 var (
 	checkFileFilterIn = []string{
 		"./objects/",
+		"./config",
 	}
 )
 
