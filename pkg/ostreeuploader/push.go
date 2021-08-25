@@ -2,9 +2,10 @@ package ostreeuploader
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
 	"hash/crc32"
 	"io"
 	"io/ioutil"
@@ -399,7 +400,9 @@ func checkRepo(objs map[string]uint32, url *url.URL, token string, corId string)
 		log.Fatalf("Failed to create a request to check objects presence: %s\n", err.Error())
 	}
 	req.Header.Set("X-Correlation-ID", corId)
-	req.Header.Set("X-Request-ID", uuid.New().String())
+	if uuid, err := GetUUID(); err == nil {
+		req.Header.Set("X-Request-ID", uuid)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
@@ -438,7 +441,9 @@ func pushRepo(pr *io.PipeReader, u *url.URL, token string, corId string) <-chan 
 	}
 
 	req.Header.Set("X-Correlation-ID", corId)
-	req.Header.Set("X-Request-ID", uuid.New().String())
+	if uuid, err := GetUUID(); err == nil {
+		req.Header.Set("X-Request-ID", uuid)
+	}
 	req.Header.Set("Expect", "100-continue")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
@@ -523,4 +528,27 @@ func updateSummary(url *url.URL, token string) error {
 		return fmt.Errorf("Failed to update summary: %s, failed to read response body\n", resp.Status)
 	}
 	return fmt.Errorf("Failed to update summary: %s, %s\n", resp.Status, string(d))
+}
+
+func GetUUID() (string, error) {
+	uuid := make([]byte, 16)
+	_, err := io.ReadFull(rand.Reader, uuid[:])
+	if err != nil {
+		return "", err
+	}
+	uuid[6] = (uuid[6] & 0x0f) | 0x40 // Version 4
+	uuid[8] = (uuid[8] & 0x3f) | 0x80 // Variant is 10
+
+	buf := make([]byte, 36)
+	hex.Encode(buf, uuid[:4])
+	buf[8] = '-'
+	hex.Encode(buf[9:13], uuid[4:6])
+	buf[13] = '-'
+	hex.Encode(buf[14:18], uuid[6:8])
+	buf[18] = '-'
+	hex.Encode(buf[19:23], uuid[8:10])
+	buf[23] = '-'
+	hex.Encode(buf[24:], uuid[10:])
+
+	return string(buf), nil
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"github.com/foundriesio/ostreeuploader/pkg/ostreeuploader"
-	"github.com/google/uuid"
 	"log"
 	"os"
 )
@@ -38,7 +37,7 @@ func main() {
 
 	id := *corId
 	if len(id) == 0 {
-		id = uuid.New().String()
+		id, _ = ostreeuploader.GetUUID()
 	}
 	if err := checker.Check(id); err != nil {
 		log.Fatalf("Failed to run Fio Checker: %s\n", err.Error())
