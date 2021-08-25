@@ -25,11 +25,15 @@ type (
 	checker struct {
 		ostreehub *ostreeHubAccessor
 		status    *CheckStatus
+		filter    []string
 	}
 )
 
 var (
-	checkFileFilterIn = []string{
+	checkFileFilterInV1 = []string{
+		"./objects/",
+	}
+	checkFileFilterInV2 = []string{
 		"./objects/",
 		"./config",
 	}
@@ -40,7 +44,13 @@ func NewChecker(repo string, credFile string, apiVer string) (Checker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &checker{ostreehub: th}, nil
+	return &checker{ostreehub: th, filter: func() []string {
+		if apiVer == "v2" {
+			return checkFileFilterInV2
+		} else {
+			return checkFileFilterInV1
+		}
+	}()}, nil
 }
 
 func NewCheckerNoAuth(repo string, hubURL string, factory string, apiVer string) (Checker, error) {
@@ -48,7 +58,13 @@ func NewCheckerNoAuth(repo string, hubURL string, factory string, apiVer string)
 	if err != nil {
 		return nil, err
 	}
-	return &checker{ostreehub: th}, nil
+	return &checker{ostreehub: th, filter: func() []string {
+		if apiVer == "v2" {
+			return checkFileFilterInV2
+		} else {
+			return checkFileFilterInV1
+		}
+	}()}, nil
 }
 
 func (p *checker) Url() string {
@@ -64,7 +80,7 @@ func (p *checker) Check(corId string) error {
 		return err
 	}
 
-	p.status = check(p.ostreehub.repo, walkAndCrcRepo(p.ostreehub.repo, checkFileFilterIn), p.ostreehub.url, p.ostreehub.token, corId)
+	p.status = check(p.ostreehub.repo, walkAndCrcRepo(p.ostreehub.repo, p.filter), p.ostreehub.url, p.ostreehub.token, corId)
 	return nil
 }
 
