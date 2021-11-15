@@ -47,11 +47,12 @@ func main() {
 		}
 	}()
 
+	apiVer := "v2"
 	var puller ostreeuploader.Puller
 	if *srcCreds != "" {
-		puller, err = ostreeuploader.NewPuller(repoDir, *srcCreds, "v2")
+		puller, err = ostreeuploader.NewPuller(repoDir, *srcCreds, apiVer)
 	} else {
-		puller, err = ostreeuploader.NewPullerNoAuth(repoDir, *ostreeHubUrl, *srcFactory, "v2")
+		puller, err = ostreeuploader.NewPullerNoAuth(repoDir, *ostreeHubUrl, *srcFactory, apiVer)
 	}
 	if err != nil {
 		log.Fatalf("failed to create Fio Puller: %s", err.Error())
@@ -59,9 +60,9 @@ func main() {
 
 	var pusher ostreeuploader.Pusher
 	if *dstCreds != "" {
-		pusher, err = ostreeuploader.NewPusher(repoDir, *dstCreds, "v2")
+		pusher, err = ostreeuploader.NewPusher(repoDir, *dstCreds, apiVer)
 	} else {
-		pusher, err = ostreeuploader.NewPusherNoAuth(repoDir, *ostreeHubUrl, *dstFactory, "v2")
+		pusher, err = ostreeuploader.NewPusherNoAuth(repoDir, *ostreeHubUrl, *dstFactory, apiVer)
 	}
 	if err != nil {
 		log.Fatalf("Failed to create Fio Pusher: %s\n", err.Error())
