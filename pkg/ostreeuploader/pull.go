@@ -107,15 +107,16 @@ func (p *puller) Pull(commitHash string, corId string) error {
 		return fmt.Errorf("failed to get download URLs: download URL list is empty")
 	}
 	// we just get the first download URL, might wanna add some logic to determine the closest GCS server/bucket
-	log.Printf("download URL: %s\n", res[0].DownloadUrl)
-	cmd := exec.Command("ostree", "remote", "add", "--force", "--repo", p.ostreehub.repo, "--no-gpg-verify", "gcs", res[0].DownloadUrl)
+	downloadOriginIndx := len(res) - 1
+	log.Printf("download URL: %s\n", res[downloadOriginIndx].DownloadUrl)
+	cmd := exec.Command("ostree", "remote", "add", "--force", "--repo", p.ostreehub.repo, "--no-gpg-verify", "gcs", res[downloadOriginIndx].DownloadUrl)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("err: %s", out)
 	}
 
 	cmd = exec.Command("ostree", "pull", "--repo", p.ostreehub.repo,
-		fmt.Sprintf("--http-header=Authorization=Bearer %s", res[0].AccessToken), "gcs", commitHash)
+		fmt.Sprintf("--http-header=Authorization=Bearer %s", res[downloadOriginIndx].AccessToken), "gcs", commitHash)
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
