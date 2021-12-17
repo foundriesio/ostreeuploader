@@ -36,6 +36,7 @@ var (
 	checkFileFilterInV2 = []string{
 		"./objects/",
 		"./config",
+		"./deltas",
 	}
 )
 
