@@ -37,6 +37,7 @@ var (
 		"./objects/",
 		"./config",
 		"./deltas",
+		"./delta-indexes/",
 	}
 )
 

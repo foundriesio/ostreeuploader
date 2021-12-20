@@ -97,6 +97,7 @@ var (
 		"./config",
 		"./refs/",
 		"./deltas/",
+		"./delta-indexes/",
 	}
 )
 
