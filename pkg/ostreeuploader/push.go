@@ -410,7 +410,7 @@ func checkRepo(objs map[string]uint32, url *url.URL, token string, corId string)
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatalf("Failed to make request to check objects presence: %s\n", err.Error())
+		log.Fatalf("Failed to make request to check objects presence; err: %s, cor id: %s\n", err.Error(), corId)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -420,12 +420,16 @@ func checkRepo(objs map[string]uint32, url *url.URL, token string, corId string)
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Failed to read response: %s\n", err.Error())
+		log.Fatalf("Failed to read response; err: %s, cor id: %s\n", err.Error(), corId)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Fatalf("Check request failed; url: %s, status: %s, cor id: %s, resp body: %s\n", url.String(), resp.Status, corId, body)
 	}
 
 	respMap := map[string]uint32{}
 	if err := json.Unmarshal(body, &respMap); err != nil {
-		log.Fatalf("Failed to read response: %s\n", err.Error())
+		log.Fatalf("Failed to unmarshal response; err: %s, resp body: %s, cor id: %s\n", err.Error(), body, corId)
 	}
 	return respMap
 }
@@ -462,13 +466,14 @@ func pushRepo(pr *io.PipeReader, u *url.URL, token string, corId string) <-chan 
 		} else {
 			defer resp.Body.Close()
 
+			status := SyncReport{}
 			body, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
-				log.Printf("Filed to read response: %s\n", err.Error())
-			}
-			var status SyncReport
-			if err := json.Unmarshal(body, &status); err != nil {
-				log.Printf("Filed to umarshal response: %s\n", err.Error())
+				log.Printf("Failed to read response; err: %s, cor id: %s\n", err.Error(), corId)
+			} else {
+				if err := json.Unmarshal(body, &status); err != nil {
+					log.Printf("Failed to umarshal response; err: %s, resp body: %s, cor id: %s\n", err.Error(), body, corId)
+				}
 			}
 			reportChannel <- &status
 		}
@@ -526,9 +531,9 @@ func updateSummary(url *url.URL, token string) error {
 	}
 	d, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("Failed to update summary: %s, failed to read response body\n", resp.Status)
+		return fmt.Errorf("Failed to read update summary response body: %s\n", resp.Status)
 	}
-	return fmt.Errorf("Failed to update summary: %s, %s\n", resp.Status, string(d))
+	return fmt.Errorf("Failed to update summary; status: %s, resp body: %s\n", resp.Status, string(d))
 }
 
 func GetUUID() (string, error) {

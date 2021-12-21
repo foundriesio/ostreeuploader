@@ -55,12 +55,12 @@ func GetOAuthToken(auth *OAuth2) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("Failed to make a request for an oauth2 token: %s\n", err.Error())
 	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Failed to get oauth2 token: %s\n", resp.Status)
-	}
 	rd, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("Failed to get oauth2 token: %s\n", err.Error())
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("Failed to get oauth2 token; status: %s, error: %s\n", resp.Status, rd)
 	}
 	var tok OAuthToken
 	err = json.Unmarshal(rd, &tok)
