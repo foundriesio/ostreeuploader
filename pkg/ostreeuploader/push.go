@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 type (
@@ -407,7 +409,8 @@ func checkRepo(objs map[string]uint32, url *url.URL, token string, corId string)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
-	client := &http.Client{}
+	// Default Transport is used which sets net.Dialer.Timeout to 30s
+	client := &http.Client{Timeout: 300 * time.Second /* timeout for an overall request processing */}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatalf("Failed to make request to check objects presence; err: %s, cor id: %s\n", err.Error(), corId)
@@ -452,10 +455,22 @@ func pushRepo(pr *io.PipeReader, u *url.URL, token string, corId string) <-chan 
 	req.Header.Set("Expect", "100-continue")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
-	//TODO: timeout
-	client := &http.Client{}
-	client.Transport = &http.Transport{DisableCompression: false,
-		WriteBufferSize: 1024 * 1025 * 10, ReadBufferSize: 1024 * 1024 * 10}
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DisableCompression:    false,
+		WriteBufferSize:       1024 * 1025 * 10,
+		ReadBufferSize:        1024 * 1024 * 10,
+	}
+
+	client := &http.Client{Transport: transport}
 
 	reportChannel := make(chan *SyncReport, 1)
 	go func() {
