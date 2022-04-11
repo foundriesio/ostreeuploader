@@ -410,8 +410,28 @@ func checkRepo(objs map[string]uint32, url *url.URL, token string, corId string)
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
 	// Default Transport is used which sets net.Dialer.Timeout to 30s
-	client := &http.Client{Timeout: 300 * time.Second /* timeout for an overall request processing */}
-	resp, err := client.Do(req)
+	client := &http.Client{Timeout: 300 * time.Second /* 5m timeout for an overall request processing */}
+	var (
+		resp        *http.Response
+		attemptNumb = 1
+		waitTime    = 500 * time.Millisecond
+	)
+	const maxAttemptNumb = 3
+	for {
+		resp, err = client.Do(req)
+		if err == nil {
+			break
+		}
+		log.Printf("Error happenned while checking objects presence; attempt %d(%d), err: %s", attemptNumb, maxAttemptNumb, err.Error())
+		if attemptNumb == maxAttemptNumb {
+			break
+		}
+		if !os.IsTimeout(err) {
+			time.Sleep(waitTime)
+			waitTime += waitTime
+		}
+		attemptNumb++
+	}
 	if err != nil {
 		log.Fatalf("Failed to make request to check objects presence; err: %s, cor id: %s\n", err.Error(), corId)
 	}
@@ -475,23 +495,53 @@ func pushRepo(pr *io.PipeReader, u *url.URL, token string, corId string) <-chan 
 	reportChannel := make(chan *SyncReport, 1)
 	go func() {
 		defer close(reportChannel)
-		resp, err := client.Do(req)
-		if err != nil {
-			panic(err)
-		} else {
-			defer resp.Body.Close()
 
-			status := SyncReport{}
-			body, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				log.Printf("Failed to read response; err: %s, cor id: %s\n", err.Error(), corId)
-			} else {
-				if err := json.Unmarshal(body, &status); err != nil {
-					log.Printf("Failed to umarshal response; err: %s, resp body: %s, cor id: %s\n", err.Error(), body, corId)
-				}
+		var (
+			err         error
+			resp        *http.Response
+			attemptNumb = 1
+		)
+		const maxAttemptNumb = 3
+
+		for {
+			resp, err = client.Do(req)
+			// we cannot do retry for any error types since this is a TAR archive streaming POST request and
+			// requires restarting of an overall push process if it's interrupted in the middle of the streaming process.
+			// Since just connection timeouts are set for this request (not timeout for an overall request processing),
+			// then it's safe to do retries for timeout errors.
+			if err == nil || !os.IsTimeout(err) {
+				break
 			}
-			reportChannel <- &status
+			log.Printf("Timeout while pushing objects; attempt %d(%d)", attemptNumb, maxAttemptNumb)
+			if attemptNumb == maxAttemptNumb {
+				break
+			}
+			attemptNumb++
 		}
+
+		if err != nil {
+			log.Fatalf("Failed to push objects; err: %s, cor id: %s\n", err.Error(), corId)
+		}
+
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				log.Printf("Failed to close a response body: %s\n", err.Error())
+			}
+		}()
+
+		status := SyncReport{}
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Failed to read response; err: %s, cor id: %s\n", err.Error(), corId)
+		}
+		if resp.StatusCode != http.StatusOK {
+			log.Fatalf("Failed to push objects; status_code: %d, cor id: %s\n, resp: %s", resp.StatusCode, corId, body)
+		}
+		if err := json.Unmarshal(body, &status); err != nil {
+			log.Printf("Failed to umarshal response; err: %s, resp body: %s, cor id: %s\n", err.Error(), body, corId)
+		}
+
+		reportChannel <- &status
 	}()
 	return reportChannel
 }
