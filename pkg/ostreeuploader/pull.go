@@ -3,7 +3,7 @@ package ostreeuploader
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -21,6 +21,19 @@ type (
 		ostreehub *ostreeHubAccessor
 	}
 )
+
+func NewPullerWithToken(repo string, factory string, token string, apiVer string) (Puller, error) {
+	cmd := exec.Command("ostree", "init", "--repo", repo, "--mode", "archive")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("err: %s", out)
+	}
+	th, err := newOSTreeHubAccessorWithToken(repo, factory, token, apiVer)
+	if err != nil {
+		return nil, err
+	}
+	return &puller{ostreehub: th}, nil
+}
 
 func NewPuller(repo string, credFile string, apiVer string) (Puller, error) {
 	cmd := exec.Command("ostree", "init", "--repo", repo, "--mode", "archive")
@@ -71,7 +84,7 @@ func (p *puller) Pull(commitHash string, corId string) error {
 		req.Header.Set("X-Request-ID", uuid)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.ostreehub.token))
+	p.ostreehub.token.SetAuthHeader(req)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -84,7 +97,7 @@ func (p *puller) Pull(commitHash string, corId string) error {
 		}
 	}()
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}

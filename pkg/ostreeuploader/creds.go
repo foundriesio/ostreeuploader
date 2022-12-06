@@ -4,7 +4,7 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -55,7 +55,7 @@ func GetOAuthToken(auth *OAuth2) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("Failed to make a request for an oauth2 token: %s\n", err.Error())
 	}
-	rd, err := ioutil.ReadAll(resp.Body)
+	rd, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("Failed to get oauth2 token: %s\n", err.Error())
 	}
@@ -119,7 +119,7 @@ func ParseCredArchive(credZip string) (*OSTreeInfo, error) {
 	}
 	defer fi.Close()
 
-	data, err := ioutil.ReadAll(fi)
+	data, err := io.ReadAll(fi)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to read data from %s file located in the credential archive: %s\n", treehubFile, err.Error())
 	}

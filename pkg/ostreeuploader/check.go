@@ -41,6 +41,20 @@ var (
 	}
 )
 
+func NewCheckerWithToken(repo string, factory string, token string, apiVer string) (Checker, error) {
+	th, err := newOSTreeHubAccessorWithToken(repo, factory, token, apiVer)
+	if err != nil {
+		return nil, err
+	}
+	return &checker{ostreehub: th, filter: func() []string {
+		if apiVer == "v2" {
+			return checkFileFilterInV2
+		} else {
+			return checkFileFilterInV1
+		}
+	}()}, nil
+}
+
 func NewChecker(repo string, credFile string, apiVer string) (Checker, error) {
 	th, err := newOSTreeHubAccessor(repo, credFile, apiVer)
 	if err != nil {
