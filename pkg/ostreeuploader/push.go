@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -19,6 +18,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	FioApiBaseUrl = "https://api.foundries.io"
 )
 
 type (
@@ -64,6 +67,13 @@ type (
 		Sent    SendReport
 		Synced  SyncReport
 	}
+
+	Token interface {
+		SetAuthHeader(req *http.Request)
+	}
+
+	OAuth2Token string
+	FioToken    string
 )
 
 type (
@@ -71,7 +81,7 @@ type (
 		repo  string
 		url   *url.URL
 		hub   *OSTreeHub
-		token string
+		token Token
 	}
 	pusher struct {
 		ostreehub *ostreeHubAccessor
@@ -103,6 +113,29 @@ var (
 	}
 )
 
+func (t OAuth2Token) SetAuthHeader(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+string(t))
+}
+func (t FioToken) SetAuthHeader(req *http.Request) {
+	req.Header.Set("osf-token", string(t))
+}
+
+func newOSTreeHubAccessorWithToken(repo string, factory string, token string, apiVer string) (*ostreeHubAccessor, error) {
+	if err := checkRepoDir(repo); err != nil {
+		return nil, err
+	}
+	hub := &OSTreeHub{
+		URL:     FioApiBaseUrl,
+		Factory: factory,
+		Auth:    nil,
+	}
+	reqUrl, err := url.Parse(hub.URL + "/ota/ostreehub/" + factory + "/" + apiVer + "/repos/lmp")
+	if err != nil {
+		return nil, err
+	}
+	return &ostreeHubAccessor{repo: repo, url: reqUrl, hub: hub, token: FioToken(token)}, nil
+}
+
 func newOSTreeHubAccessor(repo string, credFile string, apiVer string) (*ostreeHubAccessor, error) {
 	if err := checkRepoDir(repo); err != nil {
 		return nil, err
@@ -116,7 +149,7 @@ func newOSTreeHubAccessor(repo string, credFile string, apiVer string) (*ostreeH
 		return nil, err
 	}
 
-	return &ostreeHubAccessor{repo: repo, url: reqUrl, hub: hub, token: ""}, nil
+	return &ostreeHubAccessor{repo: repo, url: reqUrl, hub: hub, token: OAuth2Token("")}, nil
 }
 
 func newOSTreeHubAccessorNoAuth(repo string, hubURL string, factory string, apiVer string) (*ostreeHubAccessor, error) {
@@ -137,7 +170,15 @@ func newOSTreeHubAccessorNoAuth(repo string, hubURL string, factory string, apiV
 	if err != nil {
 		return nil, err
 	}
-	return &ostreeHubAccessor{repo: repo, url: reqUrl, hub: &hub, token: ""}, nil
+	return &ostreeHubAccessor{repo: repo, url: reqUrl, hub: &hub, token: OAuth2Token("")}, nil
+}
+
+func NewPusherWithToken(repo string, factory string, token string, apiVer string) (Pusher, error) {
+	th, err := newOSTreeHubAccessorWithToken(repo, factory, token, apiVer)
+	if err != nil {
+		return nil, err
+	}
+	return &pusher{ostreehub: th}, nil
 }
 
 func NewPusher(repo string, credFile string, apiVer string) (Pusher, error) {
@@ -222,7 +263,7 @@ func (p *ostreeHubAccessor) auth() error {
 		return err
 	}
 	log.Printf("OAuth token has been successfully obtained at %s\n", p.hub.Auth.Server)
-	p.token = t
+	p.token = OAuth2Token(t)
 	return nil
 }
 
@@ -287,7 +328,7 @@ func filterRepoFiles(path string, filter []string) bool {
 	return false
 }
 
-func push(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token string, corId string) *Status {
+func push(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token Token, corId string) *Status {
 	checkReportQueue := make(chan uint, concurrentPusherNumb)
 	reportQueue := make(chan *SendReport, concurrentPusherNumb)
 	recvReportQueue := make(chan *SyncReport, concurrentPusherNumb)
@@ -334,7 +375,7 @@ func push(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token string
 	return &Status{Check: checkReportQueue, Send: reportQueue, Sync: recvReportQueue}
 }
 
-func check(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token string, corId string) *CheckStatus {
+func check(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token Token, corId string) *CheckStatus {
 	checkReportQueue := make(chan uint, concurrentPusherNumb)
 	statusQueue := make(chan *RepoFile, concurrentPusherNumb)
 
@@ -396,7 +437,7 @@ func waitForCheck(status *CheckStatus) *CheckReport {
 	}
 }
 
-func checkRepo(objs map[string]uint32, url *url.URL, token string, corId string) map[string]uint32 {
+func checkRepo(objs map[string]uint32, url *url.URL, token Token, corId string) map[string]uint32 {
 	jsonObjects, _ := json.Marshal(objs)
 	req, err := http.NewRequest("GET", url.String(), bytes.NewBuffer(jsonObjects))
 	if err != nil {
@@ -407,7 +448,7 @@ func checkRepo(objs map[string]uint32, url *url.URL, token string, corId string)
 		req.Header.Set("X-Request-ID", uuid)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	token.SetAuthHeader(req)
 
 	// Default Transport is used which sets net.Dialer.Timeout to 30s
 	client := &http.Client{Timeout: 300 * time.Second /* 5m timeout for an overall request processing */}
@@ -441,7 +482,7 @@ func checkRepo(objs map[string]uint32, url *url.URL, token string, corId string)
 		}
 	}()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatalf("Failed to read response; err: %s, cor id: %s\n", err.Error(), corId)
 	}
@@ -457,7 +498,7 @@ func checkRepo(objs map[string]uint32, url *url.URL, token string, corId string)
 	return respMap
 }
 
-func pushRepo(pr *io.PipeReader, u *url.URL, token string, corId string) <-chan *SyncReport {
+func pushRepo(pr *io.PipeReader, u *url.URL, token Token, corId string) <-chan *SyncReport {
 	req := &http.Request{
 		Method:           "PUT",
 		ProtoMajor:       1,
@@ -473,7 +514,7 @@ func pushRepo(pr *io.PipeReader, u *url.URL, token string, corId string) <-chan 
 		req.Header.Set("X-Request-ID", uuid)
 	}
 	req.Header.Set("Expect", "100-continue")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	token.SetAuthHeader(req)
 
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
@@ -530,7 +571,7 @@ func pushRepo(pr *io.PipeReader, u *url.URL, token string, corId string) <-chan 
 		}()
 
 		status := SyncReport{}
-		body, err := ioutil.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			log.Printf("Failed to read response; err: %s, cor id: %s\n", err.Error(), corId)
 		}
@@ -581,12 +622,12 @@ func wait(statusQueue *Status) *Report {
 	}
 }
 
-func updateSummary(url *url.URL, token string) error {
+func updateSummary(url *url.URL, token Token) error {
 	req, err := http.NewRequest("PUT", url.String(), nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	token.SetAuthHeader(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -594,7 +635,7 @@ func updateSummary(url *url.URL, token string) error {
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
-	d, err := ioutil.ReadAll(resp.Body)
+	d, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("Failed to read update summary response body: %s\n", resp.Status)
 	}
