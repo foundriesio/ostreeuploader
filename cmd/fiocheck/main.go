@@ -2,9 +2,10 @@ package main
 
 import (
 	"flag"
-	"github.com/foundriesio/ostreeuploader/pkg/ostreeuploader"
 	"log"
 	"os"
+
+	"github.com/foundriesio/ostreeuploader/pkg/ostreeuploader"
 )
 
 var (
@@ -28,7 +29,7 @@ func main() {
 
 	var checker ostreeuploader.Checker
 	if len(*token) > 0 && len(*factory) > 0 {
-		checker, err = ostreeuploader.NewCheckerWithToken(*repo, *factory, *token, *apiVer)
+		checker, err = ostreeuploader.NewCheckerWithToken(*repo, *ostreeHubUrl, *factory, *token, *apiVer)
 	} else if *creds != "" {
 		checker, err = ostreeuploader.NewChecker(*repo, *creds, *apiVer)
 	} else {

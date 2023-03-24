@@ -41,8 +41,8 @@ var (
 	}
 )
 
-func NewCheckerWithToken(repo string, factory string, token string, apiVer string) (Checker, error) {
-	th, err := newOSTreeHubAccessorWithToken(repo, factory, token, apiVer)
+func NewCheckerWithToken(repo, hubURL, factory, token, apiVer string) (Checker, error) {
+	th, err := newOSTreeHubAccessorWithToken(repo, hubURL, factory, token, apiVer)
 	if err != nil {
 		return nil, err
 	}

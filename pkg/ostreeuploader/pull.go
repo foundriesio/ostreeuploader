@@ -22,13 +22,13 @@ type (
 	}
 )
 
-func NewPullerWithToken(repo string, factory string, token string, apiVer string) (Puller, error) {
+func NewPullerWithToken(repo, hubURL, factory, token, apiVer string) (Puller, error) {
 	cmd := exec.Command("ostree", "init", "--repo", repo, "--mode", "archive")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("err: %s", out)
 	}
-	th, err := newOSTreeHubAccessorWithToken(repo, factory, token, apiVer)
+	th, err := newOSTreeHubAccessorWithToken(repo, hubURL, factory, token, apiVer)
 	if err != nil {
 		return nil, err
 	}
