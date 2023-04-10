@@ -20,10 +20,6 @@ import (
 	"time"
 )
 
-const (
-	FioApiBaseUrl = "https://api.foundries.io"
-)
-
 type (
 	SendReport struct {
 		FileNumb uint
@@ -120,19 +116,23 @@ func (t FioToken) SetAuthHeader(req *http.Request) {
 	req.Header.Set("osf-token", string(t))
 }
 
-func newOSTreeHubAccessorWithToken(repo string, factory string, token string, apiVer string) (*ostreeHubAccessor, error) {
+func newOSTreeHubAccessorWithToken(repo, hubURL, factory, token, apiVer string) (*ostreeHubAccessor, error) {
 	if err := checkRepoDir(repo); err != nil {
 		return nil, err
 	}
+	if hubURL[len(hubURL)-1] != '/' {
+		hubURL += "/"
+	}
 	hub := &OSTreeHub{
-		URL:     FioApiBaseUrl,
+		URL:     hubURL,
 		Factory: factory,
 		Auth:    nil,
 	}
-	reqUrl, err := url.Parse(hub.URL + "/ota/ostreehub/" + factory + "/" + apiVer + "/repos/lmp")
+	reqUrl, err := url.Parse(hub.URL + factory + "/" + apiVer + "/repos/lmp")
 	if err != nil {
 		return nil, err
 	}
+
 	return &ostreeHubAccessor{repo: repo, url: reqUrl, hub: hub, token: FioToken(token)}, nil
 }
 
@@ -173,8 +173,8 @@ func newOSTreeHubAccessorNoAuth(repo string, hubURL string, factory string, apiV
 	return &ostreeHubAccessor{repo: repo, url: reqUrl, hub: &hub, token: OAuth2Token("")}, nil
 }
 
-func NewPusherWithToken(repo string, factory string, token string, apiVer string) (Pusher, error) {
-	th, err := newOSTreeHubAccessorWithToken(repo, factory, token, apiVer)
+func NewPusherWithToken(repo, hubURL, factory, token, apiVer string) (Pusher, error) {
+	th, err := newOSTreeHubAccessorWithToken(repo, hubURL, factory, token, apiVer)
 	if err != nil {
 		return nil, err
 	}

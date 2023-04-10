@@ -3,9 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/foundriesio/ostreeuploader/pkg/ostreeuploader"
 	"log"
 	"os"
+
+	"github.com/foundriesio/ostreeuploader/pkg/ostreeuploader"
 )
 
 var (
@@ -47,7 +48,7 @@ func main() {
 	apiVer := "v2"
 	var puller ostreeuploader.Puller
 	if len(*token) > 0 && len(*srcFactory) > 0 {
-		puller, err = ostreeuploader.NewPullerWithToken(repoDir, *srcFactory, *token, apiVer)
+		puller, err = ostreeuploader.NewPullerWithToken(repoDir, *ostreeHubUrl, *srcFactory, *token, apiVer)
 	} else if *srcCreds != "" {
 		puller, err = ostreeuploader.NewPuller(repoDir, *srcCreds, apiVer)
 	} else {
@@ -59,7 +60,7 @@ func main() {
 
 	var pusher ostreeuploader.Pusher
 	if len(*token) > 0 && len(*srcFactory) > 0 {
-		pusher, err = ostreeuploader.NewPusherWithToken(repoDir, *dstFactory, *token, apiVer)
+		pusher, err = ostreeuploader.NewPusherWithToken(repoDir, *ostreeHubUrl, *dstFactory, *token, apiVer)
 	} else if *dstCreds != "" {
 		pusher, err = ostreeuploader.NewPusher(repoDir, *dstCreds, apiVer)
 	} else {
