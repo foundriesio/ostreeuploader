@@ -438,9 +438,9 @@ func waitForCheck(status *CheckStatus) *CheckReport {
 }
 
 func checkRepo(objs map[string]uint32, url *url.URL, token Token, corId string) map[string]uint32 {
-	checkUrl := url.String() + "/check"
+	checkUrl := url.JoinPath("check")
 	jsonObjects, _ := json.Marshal(objs)
-	req, err := http.NewRequest("POST", checkUrl, bytes.NewBuffer(jsonObjects))
+	req, err := http.NewRequest("POST", checkUrl.String(), bytes.NewBuffer(jsonObjects))
 	if err != nil {
 		log.Fatalf("Failed to create a request to check objects presence: %s\n", err.Error())
 	}
@@ -489,7 +489,7 @@ func checkRepo(objs map[string]uint32, url *url.URL, token Token, corId string) 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Fatalf("Check request failed; url: %s, status: %s, cor id: %s, resp body: %s\n", url.String(), resp.Status, corId, body)
+		log.Fatalf("Check request failed; url: %s, status: %s, cor id: %s, resp body: %s\n", req.URL, resp.Status, corId, body)
 	}
 
 	respMap := map[string]uint32{}
