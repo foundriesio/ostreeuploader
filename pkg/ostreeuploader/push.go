@@ -440,26 +440,28 @@ func waitForCheck(status *CheckStatus) *CheckReport {
 func checkRepo(objs map[string]uint32, url *url.URL, token Token, corId string) map[string]uint32 {
 	checkUrl := url.JoinPath("check")
 	jsonObjects, _ := json.Marshal(objs)
-	req, err := http.NewRequest("POST", checkUrl.String(), bytes.NewBuffer(jsonObjects))
-	if err != nil {
-		log.Fatalf("Failed to create a request to check objects presence: %s\n", err.Error())
-	}
-	req.Header.Set("X-Correlation-ID", corId)
-	if uuid, err := GetUUID(); err == nil {
-		req.Header.Set("X-Request-ID", uuid)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	token.SetAuthHeader(req)
-
 	// Default Transport is used which sets net.Dialer.Timeout to 30s
 	client := &http.Client{Timeout: 300 * time.Second /* 5m timeout for an overall request processing */}
 	var (
+		err         error
+		req         *http.Request
 		resp        *http.Response
 		attemptNumb = 1
 		waitTime    = 500 * time.Millisecond
 	)
 	const maxAttemptNumb = 3
 	for {
+		req, err = http.NewRequest("POST", checkUrl.String(), bytes.NewBuffer(jsonObjects))
+		if err != nil {
+			log.Fatalf("Failed to create a request to check objects presence: %s\n", err.Error())
+		}
+		req.Header.Set("X-Correlation-ID", corId)
+		if uuid, err := GetUUID(); err == nil {
+			req.Header.Set("X-Request-ID", uuid)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		token.SetAuthHeader(req)
+
 		resp, err = client.Do(req)
 		if err == nil {
 			break
