@@ -92,9 +92,9 @@ const (
 	// a number of goroutine to read from the file queue and push them to OSTreeHub
 	// each goroutine at first checks if given files are already present on GCS and uploads
 	// only those files/objects that are missing or CRC is not equal
-	concurrentPusherNumb int = 20
+	concurrentPusherNumb int = 10
 	// maximum number of files to check per a single HTTP request
-	filesToCheckMaxNumb int = 500
+	filesToCheckMaxNumb int = 250
 	// maximum file size
 	maxFileSize int64 = 1024 * 1024 * 200 //200 MB
 )
