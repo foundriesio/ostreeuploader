@@ -96,7 +96,7 @@ const (
 	// maximum number of files to check per a single HTTP request
 	filesToCheckMaxNumb int = 250
 	// maximum file size
-	maxFileSize int64 = 1024 * 1024 * 200 //200 MB
+	maxFileSize int64 = 1024 * 1024 * 300 //300 MB
 )
 
 var (
