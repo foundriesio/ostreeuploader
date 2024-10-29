@@ -93,10 +93,14 @@ const (
 	// each goroutine at first checks if given files are already present on GCS and uploads
 	// only those files/objects that are missing or CRC is not equal
 	concurrentPusherNumb int = 10
-	// maximum number of files to check per a single HTTP request
-	filesToCheckMaxNumb int = 250
+	// maximum number of files to check and push per a single HTTP request
+	filesToCheckAndPushMaxNumb int = 100
 	// maximum file size
 	maxFileSize int64 = 1024 * 1024 * 300 //300 MB
+	// a number of goroutine to read from the file queue and check whether files exist on GCS
+	concurrentCheckerNumb int = 10
+	// maximum number of files to check per a single HTTP request
+	filesToCheckMaxNumb int = 150
 )
 
 var (
@@ -344,7 +348,7 @@ func push(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token Token,
 
 					for object := range fileQueue {
 						objectsToCheck[object.Path] = object.CRC32
-						if len(objectsToCheck) > filesToCheckMaxNumb {
+						if len(objectsToCheck) > filesToCheckAndPushMaxNumb {
 							break
 						}
 					}
@@ -376,12 +380,12 @@ func push(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token Token,
 }
 
 func check(repoDir string, fileQueue <-chan *RepoFile, url *url.URL, token Token, corId string) *CheckStatus {
-	checkReportQueue := make(chan uint, concurrentPusherNumb)
-	statusQueue := make(chan *RepoFile, concurrentPusherNumb)
+	checkReportQueue := make(chan uint, concurrentCheckerNumb)
+	statusQueue := make(chan *RepoFile, concurrentCheckerNumb)
 
 	go func() {
 		var wg sync.WaitGroup
-		for ii := 0; ii < concurrentPusherNumb; ii++ {
+		for ii := 0; ii < concurrentCheckerNumb; ii++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
