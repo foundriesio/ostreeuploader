@@ -530,7 +530,7 @@ func pushRepo(pr *io.PipeReader, u *url.URL, token Token, corId string) <-chan *
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableCompression:    false,
-		WriteBufferSize:       1024 * 1025 * 10,
+		WriteBufferSize:       1024 * 1024 * 10,
 		ReadBufferSize:        1024 * 1024 * 10,
 	}
 
