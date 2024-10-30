@@ -67,7 +67,7 @@ func main() {
 		log.Println("Updating summary...")
 		err := pusher.UpdateSummary()
 		if err != nil {
-			log.Printf("Failed to update summary: %s\n", err.Error())
+			log.Fatalf("Failed to update summary: %s\n", err.Error())
 		} else {
 			log.Printf("Summary has been successfully updated")
 		}
