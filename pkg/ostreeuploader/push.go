@@ -98,7 +98,7 @@ const (
 	// maximum file size
 	maxFileSize int64 = 1024 * 1024 * 300 //300 MB
 	// a number of goroutine to read from the file queue and check whether files exist on GCS
-	concurrentCheckerNumb int = 10
+	concurrentCheckerNumb int = 5
 	// maximum number of files to check per a single HTTP request
 	filesToCheckMaxNumb int = 150
 )
