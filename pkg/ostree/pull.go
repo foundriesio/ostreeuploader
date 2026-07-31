@@ -370,7 +370,9 @@ func (f *fetcher) fetchContentObjects(ctx context.Context, csums []string, concu
 }
 
 // fetchOneContent resumably downloads a single .filez content object into a
-// .part sidecar, then parses, verifies and writes the bare-user object.
+// .part sidecar, then streams its inflated body straight into the bare-user
+// object (verifying the checksum on the fly), so a large object is never held
+// whole in memory.
 func (f *fetcher) fetchOneContent(ctx context.Context, csum string) error {
 	part := filepath.Join(f.repo.path, "tmp", csum+".filez.part")
 	if err := os.MkdirAll(filepath.Dir(part), 0o755); err != nil {
@@ -380,22 +382,42 @@ func (f *fetcher) fetchOneContent(ctx context.Context, csum string) error {
 		return fmt.Errorf("download %s: %w", csum, err)
 	}
 
-	data, err := os.ReadFile(part)
-	if err != nil {
-		return err
-	}
-	hdr, content, err := parseFilez(data)
-	if err != nil {
-		// A corrupt/incomplete part: drop it so a re-run starts clean.
-		os.Remove(part)
-		return fmt.Errorf("parse %s: %w", csum, err)
-	}
-	if err := f.repo.writeContentObject(csum, hdr, content); err != nil {
+	if err := f.writeContentFromPart(csum, part); err != nil {
+		// A corrupt/incomplete part or checksum mismatch: drop it so a re-run
+		// starts clean.
 		os.Remove(part)
 		return err
 	}
 	os.Remove(part)
 	f.addContent()
+	return nil
+}
+
+// writeContentFromPart parses the .filez header from the downloaded part file
+// and writes the destination object. A regular file streams from disk through
+// the inflate reader into the object (bounded memory); a symlink (empty body,
+// target in the header) takes the small in-memory path.
+func (f *fetcher) writeContentFromPart(csum, part string) error {
+	pf, err := os.Open(part)
+	if err != nil {
+		return err
+	}
+	defer pf.Close()
+
+	hdr, body, err := openFilez(pf)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", csum, err)
+	}
+	if body == nil { // symlink: body lives in the header
+		if err := f.repo.writeContentObject(csum, hdr, nil); err != nil {
+			return err
+		}
+		return nil
+	}
+	defer body.Close()
+	if err := f.repo.writeContentObjectStream(csum, hdr, body); err != nil {
+		return err
+	}
 	return nil
 }
 

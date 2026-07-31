@@ -3,9 +3,11 @@
 package ostree
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -54,6 +56,15 @@ func (r *Repo) hasObject(csum, ext string) bool {
 // hidden, then renames it into place at dst. The parent dir of dst is created
 // if missing.
 func (r *Repo) writeFileAtomic(dst string, data []byte, mode os.FileMode, prepare func(path string) error) error {
+	return r.writeFileAtomicFrom(dst, bytes.NewReader(data), mode, nil, prepare)
+}
+
+// writeFileAtomicFrom is writeFileAtomic sourced from an io.Reader: it copies
+// src into a hidden temp file through a small buffer (so an arbitrarily large
+// body never lands in memory), fsyncs, runs the optional verify hook (e.g. a
+// streamed-checksum check) and prepare hook, then renames into place at dst.
+// If verify fails the temp file is discarded and nothing is published.
+func (r *Repo) writeFileAtomicFrom(dst string, src io.Reader, mode os.FileMode, verify func() error, prepare func(path string) error) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -66,7 +77,7 @@ func (r *Repo) writeFileAtomic(dst string, data []byte, mode os.FileMode, prepar
 		tmp.Close()
 		os.Remove(tmpName) // no-op if already renamed
 	}()
-	if _, err := tmp.Write(data); err != nil {
+	if _, err := io.Copy(tmp, src); err != nil {
 		return wrapENOSPC(err)
 	}
 	if err := tmp.Chmod(mode); err != nil {
@@ -79,6 +90,13 @@ func (r *Repo) writeFileAtomic(dst string, data []byte, mode os.FileMode, prepar
 	}
 	if err := tmp.Close(); err != nil {
 		return wrapENOSPC(err)
+	}
+	// Verify (e.g. checksum) only after the full body is on disk, before it is
+	// made visible under its content-addressed name.
+	if verify != nil {
+		if err := verify(); err != nil {
+			return err
+		}
 	}
 	if prepare != nil {
 		if err := prepare(tmpName); err != nil {
@@ -131,6 +149,50 @@ func (r *Repo) writeContentObject(csum string, h fileHeader, content []byte) err
 		return r.writeContentObjectBareUserOnly(csum, h, content)
 	}
 	return r.writeContentObjectBareUser(csum, h, content)
+}
+
+// writeContentObjectStream is a streaming variant of writeContentObject for a
+// regular-file content object: it copies the uncompressed body from body into
+// the destination .file through a small buffer (never holding the whole object
+// in memory), verifying the content-object checksum on the fly. Symlinks (whose
+// body lives in the header, not the stream) must go through writeContentObject.
+//
+// The mode-specific finalization mirrors writeContentObject: bare-user stores an
+// on-disk 0644 file plus the user.ostreemeta xattr; bare-user-only stores the
+// canonical permission bits physically and no xattr (validated first).
+func (r *Repo) writeContentObjectStream(csum string, h fileHeader, body io.Reader) error {
+	if h.isSymlink() {
+		return fmt.Errorf("writeContentObjectStream: %s is a symlink", csum)
+	}
+	var (
+		fileMode os.FileMode = 0o644
+		prepare  func(path string) error
+	)
+	if r.repoMode() == modeBareUserOnly {
+		if err := validateBareUserOnly(csum, h); err != nil {
+			return err
+		}
+		// Physical mode carries the permission bits; no xattr in bare-user-only.
+		fileMode = os.FileMode(h.mode & 0o777)
+	} else {
+		meta := gvariant.EncodeFileMeta(h.uid, h.gid, h.mode, h.xattrs)
+		prepare = func(path string) error {
+			if err := syscall.Setxattr(path, xattrOstreeMeta, meta, 0); err != nil {
+				return fmt.Errorf("set %s: %w", xattrOstreeMeta, err)
+			}
+			return nil
+		}
+	}
+	// Hash the header + streamed body so the checksum is verified without a second
+	// pass over the content.
+	sum := newContentHasher(h)
+	verify := func() error {
+		if got := hex.EncodeToString(sum.Sum(nil)); got != csum {
+			return fmt.Errorf("content object %s: checksum mismatch (got %s)", csum, got)
+		}
+		return nil
+	}
+	return r.writeFileAtomicFrom(r.objectPath(csum, "file"), io.TeeReader(body, sum), fileMode, verify, prepare)
 }
 
 // writeContentObjectBareUser writes a .file with the metadata held in the
