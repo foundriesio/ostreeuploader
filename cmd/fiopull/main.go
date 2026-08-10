@@ -154,7 +154,7 @@ func cmdPull(args []string) int {
 	repo := fs.String("repo", "", "path to local bare-user ostree repo (created if absent)")
 	from := fs.String("from", "", "current/base commit; enables the static-delta fast path")
 	noDelta := fs.Bool("no-delta", false, "force a full object pull (disable static deltas)")
-	jobs := fs.Int("jobs", 4, "concurrent content downloads")
+	jobs := fs.Int("jobs", 8, "concurrent content downloads")
 	progress := fs.String("progress", "auto", "progress reporting: auto (TTY bar, else silent), log (periodic lines to stderr, for non-interactive callers), none")
 	headers := headerFlags{}
 	fs.Var(headers, "header", "extra request header 'Key: Value' (repeatable)")

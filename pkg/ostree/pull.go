@@ -50,7 +50,8 @@ type PullOptions struct {
 	// UseDelta enables the static-delta fast path (default: enabled when From is
 	// set). Set NoDelta to force a full object pull.
 	NoDelta bool
-	// Concurrency bounds parallel content-object downloads (default 4).
+	// Concurrency bounds parallel object downloads (metadata walk and content
+	// fetch). Default 8 when unset.
 	Concurrency int
 	// Progress, if set, receives progress snapshots during the pull. Optional;
 	// nil means no reporting.
@@ -207,10 +208,14 @@ func (r *Repo) Pull(ctx context.Context, opts PullOptions) (*PullResult, error) 
 	}
 
 	if !deltaDone {
-		// Full object pull: walk the tree, fetching metadata depth-first and
+		// Full object pull: walk the tree, fetching metadata concurrently and
 		// collecting the set of content objects to download.
 		content := newCsumSet()
-		if err := f.walkDirTree(ctx, c.RootDirTree, c.RootDirMeta, content); err != nil {
+		walkCtx, walkCancel := context.WithCancel(ctx)
+		wp := newWalkPool(pullConcurrency(opts.Concurrency), walkCancel)
+		err := f.walkDirTree(walkCtx, c.RootDirTree, c.RootDirMeta, content, wp)
+		walkCancel()
+		if err != nil {
 			return nil, err
 		}
 		// Fetch content objects concurrently (each resumable). The total is known
@@ -263,7 +268,13 @@ func trimRef(b []byte) string {
 
 // walkDirTree fetches a dirtree and its dirmeta (skipping any already present),
 // records its file content objects, and recurses into subdirectories.
-func (f *fetcher) walkDirTree(ctx context.Context, treeCsum, metaCsum string, content *csumSet) error {
+//
+// Subdirectories are walked concurrently under a shared semaphore: the metadata
+// tree of a large rootfs is hundreds of dirtree/dirmeta objects, and a strictly
+// serial depth-first walk pays one network round-trip per object before content
+// can start. Fanning the recursion out overlaps those round-trips. w bounds the
+// total in-flight walk goroutines across the whole recursion.
+func (f *fetcher) walkDirTree(ctx context.Context, treeCsum, metaCsum string, content *csumSet, w *walkPool) error {
 	if err := f.fetchMetadata(ctx, metaCsum, "dirmeta"); err != nil {
 		return fmt.Errorf("fetch dirmeta %s: %w", metaCsum, err)
 	}
@@ -274,16 +285,81 @@ func (f *fetcher) walkDirTree(ctx context.Context, treeCsum, metaCsum string, co
 	if err != nil {
 		return err
 	}
+	var wg sync.WaitGroup
 	for _, e := range entries {
-		if e.IsDir {
-			if err := f.walkDirTree(ctx, e.Checksum, e.MetaSum, content); err != nil {
-				return err
-			}
-		} else {
+		if !e.IsDir {
 			content.add(e.Checksum)
+			continue
+		}
+		e := e
+		// Try to run this subtree on a pool slot; if none is free, walk it inline
+		// so a deep tree cannot deadlock waiting on itself for a slot.
+		if w.acquire(ctx) {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer w.release()
+				if err := f.walkDirTree(ctx, e.Checksum, e.MetaSum, content, w); err != nil {
+					w.setErr(err)
+				}
+			}()
+		} else {
+			if err := f.walkDirTree(ctx, e.Checksum, e.MetaSum, content, w); err != nil {
+				w.setErr(err)
+			}
 		}
 	}
-	return nil
+	wg.Wait()
+	return w.err()
+}
+
+// walkPool bounds the number of concurrent subtree-walk goroutines and captures
+// the first error, cancelling the walk when one occurs.
+type walkPool struct {
+	sem    chan struct{}
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	first  error
+}
+
+func newWalkPool(concurrency int, cancel context.CancelFunc) *walkPool {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	return &walkPool{sem: make(chan struct{}, concurrency), cancel: cancel}
+}
+
+// acquire takes a pool slot without blocking; it returns false if none is free
+// (caller then recurses inline) or the walk has been cancelled.
+func (w *walkPool) acquire(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	select {
+	case w.sem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (w *walkPool) release() { <-w.sem }
+
+func (w *walkPool) setErr(err error) {
+	w.mu.Lock()
+	if w.first == nil {
+		w.first = err
+		if w.cancel != nil {
+			w.cancel()
+		}
+	}
+	w.mu.Unlock()
+}
+
+func (w *walkPool) err() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.first
 }
 
 // fetchMetadata downloads a metadata object (small; no byte-resume needed) and
@@ -314,12 +390,26 @@ func (f *fetcher) fetchOptionalMetadata(ctx context.Context, csum, ext string) e
 	return err
 }
 
+// defaultConcurrency bounds parallel object downloads when the caller does not
+// specify one. Higher than the old default of 4: with HTTP keep-alive pooling
+// (see newHTTPRoundTripper) extra streams no longer cost a handshake each, and
+// overlapping more small-object round-trips is the main lever on a high-latency
+// remote.
+const defaultConcurrency = 8
+
+// pullConcurrency resolves the effective concurrency from an optional caller
+// value (0 or negative means "use the default").
+func pullConcurrency(c int) int {
+	if c <= 0 {
+		return defaultConcurrency
+	}
+	return c
+}
+
 // fetchContentObjects downloads each content object (resumably) and converts it
 // to a bare-user .file object, with bounded concurrency.
 func (f *fetcher) fetchContentObjects(ctx context.Context, csums []string, concurrency int) error {
-	if concurrency <= 0 {
-		concurrency = 4
-	}
+	concurrency = pullConcurrency(concurrency)
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	var (
@@ -516,8 +606,9 @@ func (f *fetcher) addContentSkipped() {
 	f.emit()
 }
 
-// csumSet is a small ordered, deduplicated set of checksums.
+// csumSet is a small ordered, deduplicated, concurrency-safe set of checksums.
 type csumSet struct {
+	mu    sync.Mutex
 	seen  map[string]bool
 	order []string
 }
@@ -525,10 +616,16 @@ type csumSet struct {
 func newCsumSet() *csumSet { return &csumSet{seen: map[string]bool{}} }
 
 func (s *csumSet) add(c string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !s.seen[c] {
 		s.seen[c] = true
 		s.order = append(s.order, c)
 	}
 }
 
-func (s *csumSet) list() []string { return s.order }
+func (s *csumSet) list() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.order
+}
