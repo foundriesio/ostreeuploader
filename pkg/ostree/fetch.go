@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // RemoteConfig describes where and how to fetch objects from. BaseURL may be an
@@ -46,10 +47,28 @@ func newTransport(rc RemoteConfig) (transport, error) {
 		return &fileTransport{root: u.Path}, nil
 	case "http", "https":
 		base := strings.TrimRight(rc.BaseURL, "/")
-		return &httpTransport{client: &http.Client{}, base: base, headers: rc.Headers}, nil
+		return &httpTransport{client: &http.Client{Transport: newHTTPRoundTripper()}, base: base, headers: rc.Headers}, nil
 	default:
 		return nil, fmt.Errorf("unsupported remote scheme %q", u.Scheme)
 	}
+}
+
+// newHTTPRoundTripper returns an http.Transport tuned for pulling many small
+// objects from one host. The stdlib default keeps only MaxIdleConnsPerHost=2
+// idle keep-alive connections, so a concurrent pull (jobs > 2) closes and
+// re-opens a connection for most objects — paying a fresh TCP+TLS handshake
+// (≈1 RTT) per object, which dominates wall-clock on a real HTTPS remote. Raise
+// the idle-pool caps so completed fetches return their connection to the pool
+// for the next object to reuse, collapsing thousands of handshakes to a handful.
+func newHTTPRoundTripper() http.RoundTripper {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	// All requests target a single host, so size the idle pool to cover the
+	// content-fetch concurrency (with headroom) rather than the stdlib's 2.
+	t.MaxIdleConns = 128
+	t.MaxIdleConnsPerHost = 128
+	t.MaxConnsPerHost = 0 // unbounded in-flight; the fetcher bounds concurrency itself
+	t.IdleConnTimeout = 90 * time.Second
+	return t
 }
 
 // --- HTTP transport ---
