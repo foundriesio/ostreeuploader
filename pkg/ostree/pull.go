@@ -412,7 +412,16 @@ func (f *fetcher) downloadResumable(ctx context.Context, relPath, part string) (
 
 	rc, resumed, err := f.t.open(ctx, relPath, offset)
 	if err != nil {
-		return 0, err
+		// A .part whose size is at/beyond the object length makes the server
+		// reject the resume Range with 416 (e.g. a prior run finished the
+		// download but was killed before the part was consumed). Recover by
+		// discarding the stale part and refetching the whole object.
+		if offset > 0 && isRangeNotSatisfiable(err) {
+			rc, resumed, err = f.t.open(ctx, relPath, 0)
+		}
+		if err != nil {
+			return 0, err
+		}
 	}
 	defer rc.Close()
 

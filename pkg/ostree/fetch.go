@@ -110,6 +110,18 @@ func isNotFound(err error) bool {
 	return false
 }
 
+// isRangeNotSatisfiable reports whether err is an HTTP 416 response. This
+// happens when we resume a .part sidecar whose size is at/beyond the object's
+// length (e.g. a previous run downloaded the object in full but was killed
+// before the part was consumed and removed): the Range: bytes=<size>- request
+// starts past the end. The caller recovers by refetching from offset 0.
+func isRangeNotSatisfiable(err error) bool {
+	if he, ok := err.(*httpError); ok {
+		return he.status == http.StatusRequestedRangeNotSatisfiable
+	}
+	return false
+}
+
 // --- file:// transport ---
 
 type fileTransport struct{ root string }

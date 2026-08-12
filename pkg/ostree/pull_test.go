@@ -240,6 +240,55 @@ func TestPullRangeIgnoredFallback(t *testing.T) {
 	}
 }
 
+// TestPullResumePartAtFullSize covers the case where a prior run left a .part
+// sidecar whose size equals (or exceeds) the object's full length — e.g. the
+// object finished downloading but the process was killed before the part was
+// consumed and removed. Resuming with Range: bytes=<size>- makes a Range-honoring
+// server (like GCS) reply 416; the pull must recover by refetching from 0.
+func TestPullResumePartAtFullSize(t *testing.T) {
+	requireOstree(t)
+	srcRepo, ref, commit := makeContentRepo(t)
+	// A server that honors Range via ServeContent, so an out-of-range resume
+	// start yields a real 416 (the stdlib FileServer behaves the same way).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rel := strings.TrimPrefix(r.URL.Path, "/")
+		data, err := os.ReadFile(filepath.Join(srcRepo, filepath.FromSlash(rel)))
+		if err != nil {
+			http.Error(w, "nf", http.StatusNotFound)
+			return
+		}
+		http.ServeContent(w, r, filepath.Base(rel), zeroTime, strings.NewReader(string(data)))
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "dest")
+	r := OpenRepo(dest)
+
+	// Pre-seed a .part for the big object at its exact full size, so the resume
+	// Range starts at the end of the object and the server returns 416.
+	bigCsum := largestFileObject(t, OpenRepo(srcRepo), commit)
+	srcPart, err := os.ReadFile(OpenRepo(srcRepo).objectPath(bigCsum, "filez"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(dest, "tmp"), 0o755)
+	if err := os.WriteFile(filepath.Join(dest, "tmp", bigCsum+".filez.part"), srcPart, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := r.Pull(context.Background(), PullOptions{Remote: RemoteConfig{BaseURL: srv.URL}, Ref: ref, Concurrency: 1})
+	if err != nil {
+		t.Fatalf("pull with full-size .part (416 resume) failed: %v", err)
+	}
+	if res.Commit != commit {
+		t.Fatalf("commit %s want %s", res.Commit, commit)
+	}
+	out := run(t, "ostree", "--repo="+dest, "fsck")
+	if !strings.Contains(out, "no errors found") {
+		t.Errorf("fsck after 416 recovery failed:\n%s", out)
+	}
+}
+
 // largestFileObject returns the checksum of the largest regular-file content
 // object reachable from the commit (the random blob).
 func largestFileObject(t *testing.T, r *Repo, commit string) string {
