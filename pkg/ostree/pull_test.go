@@ -166,7 +166,7 @@ func TestPullByteLevelResume(t *testing.T) {
 		t.Fatal("expected first pull to fail on truncated object")
 	}
 	// A .part sidecar should remain with the partial bytes.
-	part := filepath.Join(dest, "tmp", bigCsum+".filez.part")
+	part := filepath.Join(dest, "tmp", bigCsum+partFileSuffix)
 	fi, perr := os.Stat(part)
 	if perr != nil {
 		t.Fatalf("expected partial sidecar %s: %v", part, perr)
@@ -225,7 +225,7 @@ func TestPullRangeIgnoredFallback(t *testing.T) {
 	// Pre-seed a bogus partial for the big object to exercise the truncate path.
 	bigCsum := largestFileObject(t, OpenRepo(srcRepo), commit)
 	os.MkdirAll(filepath.Join(dest, "tmp"), 0o755)
-	os.WriteFile(filepath.Join(dest, "tmp", bigCsum+".filez.part"), []byte("garbage"), 0o644)
+	os.WriteFile(filepath.Join(dest, "tmp", bigCsum+partFileSuffix), []byte("garbage"), 0o644)
 
 	res, err := r.Pull(context.Background(), PullOptions{Remote: RemoteConfig{BaseURL: srv.URL}, Ref: ref})
 	if err != nil {
@@ -272,7 +272,7 @@ func TestPullResumePartAtFullSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.MkdirAll(filepath.Join(dest, "tmp"), 0o755)
-	if err := os.WriteFile(filepath.Join(dest, "tmp", bigCsum+".filez.part"), srcPart, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dest, "tmp", bigCsum+partFileSuffix), srcPart, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -286,6 +286,142 @@ func TestPullResumePartAtFullSize(t *testing.T) {
 	out := run(t, "ostree", "--repo="+dest, "fsck")
 	if !strings.Contains(out, "no errors found") {
 		t.Errorf("fsck after 416 recovery failed:\n%s", out)
+	}
+}
+
+// TestPullRemovesStalePartsFromDifferentPull verifies that a leftover .part
+// sidecar from an earlier, abandoned pull (whose checksum this commit does not
+// reference) is removed, while a .part that IS referenced by this commit is
+// kept so its bytes resume.
+func TestPullRemovesStalePartsFromDifferentPull(t *testing.T) {
+	requireOstree(t)
+	srcRepo, ref, commit := makeContentRepo(t)
+	srv := httptest.NewServer(http.FileServer(http.Dir(srcRepo)))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "dest")
+	r := OpenRepo(dest)
+
+	// Seed tmp/ with two sidecars before the pull:
+	//  - a "stale" one with a checksum this commit does not reference (leftover
+	//    from a different, interrupted pull) -> must be removed.
+	//  - a "relevant" one whose checksum IS a content object of this commit,
+	//    pre-filled with a partial prefix -> must be kept (byte-level resume).
+	tmpDir := filepath.Join(dest, "tmp")
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleCsum := "0000000000000000000000000000000000000000000000000000000000000001"
+	stalePart := filepath.Join(tmpDir, staleCsum+partFileSuffix)
+	if err := os.WriteFile(stalePart, []byte("leftover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	relevantCsum := largestFileObject(t, OpenRepo(srcRepo), commit)
+	relevantPart := filepath.Join(tmpDir, relevantCsum+partFileSuffix)
+	// A short, valid prefix of the real object so the resume path appends to it.
+	srcObj, err := os.ReadFile(OpenRepo(srcRepo).objectPath(relevantCsum, "filez"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(relevantPart, srcObj[:1024], 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := r.Pull(context.Background(), PullOptions{Remote: RemoteConfig{BaseURL: srv.URL}, Ref: ref, Concurrency: 1})
+	if err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+	if res.Commit != commit {
+		t.Fatalf("commit %s want %s", res.Commit, commit)
+	}
+	if res.PartsRemoved != 1 {
+		t.Errorf("PartsRemoved=%d, want 1 (the stale sidecar)", res.PartsRemoved)
+	}
+	if _, err := os.Stat(stalePart); !os.IsNotExist(err) {
+		t.Errorf("stale .part sidecar %s was not removed", stalePart)
+	}
+	// The relevant sidecar is consumed by a successful fetch; the repo must be valid.
+	out := run(t, "ostree", "--repo="+dest, "fsck")
+	if !strings.Contains(out, "no errors found") {
+		t.Errorf("fsck failed:\n%s", out)
+	}
+}
+
+// TestPullKeepsRelevantPartsOnResume verifies that re-running the SAME commit
+// keeps every leftover .part (nothing is stale), so PartsRemoved is zero.
+func TestPullKeepsRelevantPartsOnResume(t *testing.T) {
+	requireOstree(t)
+	srcRepo, ref, commit := makeContentRepo(t)
+	srv := httptest.NewServer(http.FileServer(http.Dir(srcRepo)))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "dest")
+	r := OpenRepo(dest)
+
+	// Seed a partial sidecar for a real content object of this commit.
+	tmpDir := filepath.Join(dest, "tmp")
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	csum := largestFileObject(t, OpenRepo(srcRepo), commit)
+	srcObj, err := os.ReadFile(OpenRepo(srcRepo).objectPath(csum, "filez"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, csum+partFileSuffix), srcObj[:1024], 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := r.Pull(context.Background(), PullOptions{Remote: RemoteConfig{BaseURL: srv.URL}, Ref: ref, Concurrency: 1})
+	if err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+	if res.PartsRemoved != 0 {
+		t.Errorf("PartsRemoved=%d, want 0 (the sidecar is still relevant)", res.PartsRemoved)
+	}
+	if res.Commit != commit {
+		t.Fatalf("commit %s want %s", res.Commit, commit)
+	}
+}
+
+// TestPullPrunesStalePartsOnNoOpPull verifies that the end-of-pull prune runs
+// on success even when no content is fetched: a stale sidecar seeded before a
+// re-pull of an already-complete commit is removed. This is the case the old
+// mid-pull, content-set-scoped cleanup missed (a client that never fetches
+// anything new, e.g. after a rollback).
+func TestPullPrunesStalePartsOnNoOpPull(t *testing.T) {
+	requireOstree(t)
+	srcRepo, ref, _ := makeContentRepo(t)
+	srv := httptest.NewServer(http.FileServer(http.Dir(srcRepo)))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "dest")
+	r := OpenRepo(dest)
+	opts := PullOptions{Remote: RemoteConfig{BaseURL: srv.URL}, Ref: ref, Concurrency: 1}
+	if _, err := r.Pull(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed a stale sidecar for a commit this pull does not reference, then re-pull
+	// the already-complete commit: nothing is fetched, but the prune still fires.
+	staleCsum := "0000000000000000000000000000000000000000000000000000000000000001"
+	stalePart := filepath.Join(dest, "tmp", staleCsum+partFileSuffix)
+	if err := os.WriteFile(stalePart, []byte("leftover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := r.Pull(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ContentFetched != 0 {
+		t.Errorf("expected a no-op pull, fetched %d content objects", res.ContentFetched)
+	}
+	if res.PartsRemoved != 1 {
+		t.Errorf("PartsRemoved=%d, want 1 (the stale sidecar)", res.PartsRemoved)
+	}
+	if _, err := os.Stat(stalePart); !os.IsNotExist(err) {
+		t.Errorf("stale .part sidecar %s was not pruned", stalePart)
 	}
 }
 

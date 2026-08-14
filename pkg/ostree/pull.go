@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -66,6 +67,7 @@ type PullResult struct {
 	ObjectsSkipped  int    // objects already present (resume)
 	BytesDownloaded uint64 // total bytes pulled over the wire this run
 	UsedDelta       bool   // true if the static-delta fast path was used
+	PartsRemoved    int    // leftover .part sidecars pruned at the end of this run
 }
 
 // fetcher pairs a transport with the destination repo and accumulates stats.
@@ -237,6 +239,15 @@ func (r *Repo) Pull(ctx context.Context, opts PullOptions) (*PullResult, error) 
 		if err := r.writeRef(opts.Ref, commit); err != nil {
 			return nil, err
 		}
+	}
+
+	// The pull succeeded, so every referenced content object is now in place and
+	// any .part sidecar still in tmp/ is leftover byte-level resume state from an
+	// interrupted pull of a different commit. Prune them all now (both the full
+	// and delta paths reach here). Sidecars are only ever kept across a *failed*
+	// pull, where the early returns above skip this and preserve them for resume.
+	if n, err := r.PruneParts(); err == nil {
+		f.stats.PartsRemoved = n
 	}
 
 	f.stats.Commit = commit
@@ -459,12 +470,15 @@ func (f *fetcher) fetchContentObjects(ctx context.Context, csums []string, concu
 	return ctx.Err()
 }
 
+// partFileSuffix is the suffix of a content-object download sidecar in tmp/.
+const partFileSuffix = ".filez.part"
+
 // fetchOneContent resumably downloads a single .filez content object into a
 // .part sidecar, then streams its inflated body straight into the bare-user
 // object (verifying the checksum on the fly), so a large object is never held
 // whole in memory.
 func (f *fetcher) fetchOneContent(ctx context.Context, csum string) error {
-	part := filepath.Join(f.repo.path, "tmp", csum+".filez.part")
+	part := filepath.Join(f.repo.path, "tmp", csum+partFileSuffix)
 	if err := os.MkdirAll(filepath.Dir(part), 0o755); err != nil {
 		return err
 	}
@@ -554,6 +568,48 @@ func (f *fetcher) downloadResumable(ctx context.Context, relPath, part string) (
 		return n, err // partial bytes are kept on disk for the next resume
 	}
 	return n, nil
+}
+
+// PruneParts removes all leftover content-object .part sidecars from the repo's
+// tmp/ directory and returns how many were deleted.
+//
+// A .part sidecar is the byte-level resume state of an interrupted pull. Once a
+// pull of the current commit succeeds they are all stale, and a caller may also
+// invoke this directly to reclaim space after abandoning an interrupted pull
+// (e.g. a rollback to the current commit, where no follow-up pull would ever
+// revisit and clean them).
+//
+// Only tmp/*.filez.part files with a valid 64-hex checksum stem are considered;
+// any other tmp/ content (including in-flight delta .part files, which live
+// under deltas/, not tmp/) is left untouched. Removal is best-effort: a sidecar
+// that cannot be unlinked is skipped rather than failing the call.
+func (r *Repo) PruneParts() (int, error) {
+	tmpDir := filepath.Join(r.path, "tmp")
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	removed := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, partFileSuffix) {
+			continue
+		}
+		if !hexCsumRe.MatchString(strings.TrimSuffix(name, partFileSuffix)) {
+			continue // not one of our content sidecars
+		}
+		if err := os.Remove(filepath.Join(tmpDir, name)); err != nil && !os.IsNotExist(err) {
+			continue // best-effort: leave it and move on
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 // get downloads a whole small object into memory (used for metadata and refs).
