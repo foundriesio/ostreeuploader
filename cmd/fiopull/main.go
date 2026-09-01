@@ -15,6 +15,7 @@
 //	              accurate source (static delta, else commit ostree.sizes
 //	              metadata).
 //	pull        — pull a commit (delta-aware, resumable) into a local repo.
+//	prune       — remove leftover .part download sidecars from a local repo.
 package main
 
 import (
@@ -41,6 +42,8 @@ func main() {
 		os.Exit(cmdUpdateSize(os.Args[2:]))
 	case "pull":
 		os.Exit(cmdPull(os.Args[2:]))
+	case "prune":
+		os.Exit(cmdPrune(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -53,6 +56,7 @@ func usage() {
                       [--header 'K: V' ...] [--format text|json]
   fiopull pull        [--from CSUM] [--no-delta] [--jobs N] [--header 'K: V' ...]
                       --repo PATH URL (COMMIT | REF)
+  fiopull prune       --repo PATH
 
 URL may be an http(s):// or file:// base URL of an ostree repo (e.g. a signed
 object-store URL obtained from the Device Gateway). fiopull does not talk to the
@@ -66,6 +70,11 @@ update-size picks the cheapest accurate source automatically: static delta if
 one is published for --from->target, else the commit's ostree.sizes metadata.
 Both are a single fetch. When neither is available it exits 4 so a caller can
 decide what to do.
+
+prune removes leftover *.filez.part download sidecars from the repo's tmp/
+directory (byte-level resume state of an interrupted pull). Use it to reclaim
+space after abandoning a pull, e.g. a rollback to the current commit where no
+follow-up pull would otherwise clean them.
 Exit codes: 0 ok, 1 error, 2 usage, 3 insufficient storage, 4 size unavailable.`)
 }
 
@@ -226,6 +235,28 @@ func cmdPull(args []string) int {
 	fmt.Printf("  content fetched:  %d\n", res.ContentFetched)
 	fmt.Printf("  skipped (resume): %d\n", res.ObjectsSkipped)
 	fmt.Printf("  bytes downloaded: %d (%s)\n", res.BytesDownloaded, ostree.FormatBytes(res.BytesDownloaded))
+	return 0
+}
+
+// cmdPrune removes leftover .part download sidecars from a local repo's tmp/
+// directory. It is the on-demand counterpart to the automatic prune a
+// successful pull performs, for callers that abandon a pull and never run
+// another one (e.g. a rollback to the current commit).
+func cmdPrune(args []string) int {
+	fs := flag.NewFlagSet("prune", flag.ExitOnError)
+	repo := fs.String("repo", "", "path to local bare-user ostree repo")
+	_ = fs.Parse(args)
+
+	if fs.NArg() != 0 || *repo == "" {
+		usage()
+		return 2
+	}
+
+	n, err := ostree.OpenRepo(*repo).PruneParts()
+	if err != nil {
+		return fail("text", err)
+	}
+	fmt.Printf("pruned %d partial download sidecar(s)\n", n)
 	return 0
 }
 
